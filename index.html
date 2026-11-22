@@ -226,6 +226,7 @@ body.play .bx.sel{outline:3px solid #e8a000}
   <div class="mg">가져오기 · 저장</div>
   <button class="tb" onclick="document.getElementById('impf').click();toggleMore()" title="텍스트/마크다운을 제목별 박스로 쪼개 가져와요">문서 파일 → 박스</button>
   <button class="tb" onclick="jrOpen();toggleMore()" title="어드벤처 저널에서 인물·퀘스트·지도·아이템·단서를 가져와요">저널 가져오기</button>
+  <button class="tb" onclick="r20Open();toggleMore()" title="롤20 내보내기 스크립트로 만든 핸드아웃·캐릭터 글을 붙여넣어 가져와요">롤20 가져오기</button>
   <button class="tb" onclick="exportJson();toggleMore()">저장(JSON)</button>
   <button class="tb" onclick="document.getElementById('impj').click();toggleMore()">불러오기</button>
   <div class="mg">화면</div>
@@ -808,6 +809,65 @@ function themeApply(){const d=(()=>{try{return localStorage.getItem('gmb_theme')
 function themeToggle(){try{localStorage.setItem('gmb_theme',document.body.classList.contains('dark')?'light':'dark')}catch(e){}themeApply()}
 function moreDot(){$('morebtn').classList.toggle('dot',!!(filter||filterC))}
 
+
+/* ---------- 롤20 가져오기 (roll20_export.js 결과) ---------- */
+function r20Objs(txt){ // 붙여넣은 글에서 JSON 덩어리를 차례로 찾아요 (여러 개를 이어 붙여도 됨)
+  const out=[];let d=0,st=-1,inS=false,esc=false;
+  for(let i=0;i<txt.length;i++){const c=txt[i];
+    if(inS){if(esc)esc=false;else if(c==='\\')esc=true;else if(c==='"')inS=false;continue}
+    if(c==='"'){if(d>0)inS=true;continue}
+    if(c==='{'){if(d===0)st=i;d++}
+    else if(c==='}'&&d>0){d--;if(d===0){try{const o=JSON.parse(txt.slice(st,i+1));if(o&&(o.handouts||o.characters))out.push(o)}catch(e){}}}}
+  return out;
+}
+function r20Open(){
+  window.__r20={hs:[],cs:[]};
+  dlgOpen('<h3>롤20 가져오기</h3><div style="font-size:12px;color:#7a6a48;margin-bottom:6px;line-height:1.5">롤20에서 <b>roll20_export.js</b>로 만든 「EXPORT」 핸드아웃의 글을 복사해 붙여넣어요. 여러 개로 나뉘었으면 하나씩 붙여넣을 때마다 쌓여요.</div>'
+   +'<textarea id="r20t" rows="6" style="width:100%;box-sizing:border-box;border:1px solid #c9bb98;border-radius:8px;padding:6px;font:inherit" placeholder="여기에 붙여넣기" oninput="r20Scan()"></textarea>'
+   +'<div class="row"><button onclick="document.getElementById(\'r20f\').click()">파일에서 읽기</button><input type="file" id="r20f" accept=".json,.txt" multiple style="display:none" onchange="r20File(this)"><span id="r20s" style="font-size:12px;color:#7a6a48;flex:1">아직 읽은 것이 없어요</span></div>'
+   +'<div style="margin-top:6px"><label class="row"><input type="checkbox" id="r20g" checked> GM 메모도 함께 적기</label><label class="row"><input type="checkbox" id="r20a"> 보관(archived) 처리된 것도 가져오기</label><label class="row"><input type="checkbox" id="r20at" checked> 캐릭터의 능력치를 글 끝에 요약해서 적기</label></div>'
+   +'<div class="row"><button onclick="dlgClose()">닫기</button><span style="flex:1"></span><button onclick="r20Run()">보드에 가져오기</button></div>');
+}
+function r20Add(txt){const os=r20Objs(txt);os.forEach(o=>{(o.handouts||[]).forEach(x=>__r20.hs.push(x));(o.characters||[]).forEach(x=>__r20.cs.push(x))});return os.length}
+function r20Scan(){
+  const t=document.getElementById('r20t').value;__r20.hs=[];__r20.cs=[];const n=r20Add(t)+(__r20.files||[]).reduce((a,f)=>a+r20Add(f),0);
+  document.getElementById('r20s').textContent=n?'읽은 것: 핸드아웃 '+__r20.hs.length+'개, 캐릭터 '+__r20.cs.length+'개 ('+n+'덩어리)':(t.trim()?'알아보지 못했어요. EXPORT 핸드아웃의 글 전체를 붙여넣었는지 확인해 주세요':'아직 읽은 것이 없어요');
+}
+async function r20File(inp){__r20.files=[];for(const f of inp.files)__r20.files.push(await f.text());inp.value='';r20Scan()}
+function r20Run(){
+  const hs=__r20.hs,cs=__r20.cs;if(!hs.length&&!cs.length)return toast('읽은 내용이 없어요');
+  const gm=document.getElementById('r20g').checked,arch=document.getElementById('r20a').checked,att=document.getElementById('r20at').checked;
+  commit();
+  let nb=S.boards.find(b=>b.name==='롤20 가져옴');if(!nb){nb=newBoard('롤20 가져옴');S.boards.push(nb)}B=nb;S.cur=nb.id;
+  const idBy={};CH().forEach(c=>idBy[c.name]=c.id);T.chars=T.chars||[];
+  const addCh=(n,col)=>{n=String(n||'').trim();if(!n)return null;if(!idBy[n]){const c={id:uid(),name:n,c:col};T.chars.push(c);idBy[n]=c.id}return idBy[n]};
+  const have={};B.boxes.forEach(b=>{if(b.rk)have[b.rk]=b});
+  let z=1+Math.max(0,...B.boxes.map(b=>b.z||1)),add=0,upd=0;const fresh=[];
+  const H=(body,W)=>{const cpl=Math.floor((W-24)/9.3),nl=String(body).split('\n').reduce((a,l)=>a+Math.max(1,Math.ceil(l.length/cpl)),0);return clamp(Math.round(72+nl*23),120,560)};
+  const put=(rk,o)=>{const ex=have[rk];if(ex){Object.assign(ex,{title:o.title,body:o.body});if(o.src)ex.src=o.src;if(o.who)ex.who=o.who;upd++;return}o.id=uid();o.rk=rk;o.z=z++;o.fs=15;fresh.push(o);add++};
+  hs.filter(x=>arch||!x.archived).forEach(x=>{
+    const body=[x.notes||'',gm&&x.gmnotes?'\n[GM 메모]\n'+x.gmnotes:''].join('').trim(),W=340;
+    put('h:'+x.name,{t:'text',w:W,h:H(body,W),title:x.name||'핸드아웃',body,c:'#d9c18a',who:[],kind:undefined,_g:'h'});
+  });
+  cs.filter(x=>arch||!x.archived).forEach(x=>{
+    const pc=!!(x.controlledby&&String(x.controlledby).trim()),cid=addCh(x.name,pc?'#f4b8b8':'#a8d8ea');
+    let body=[x.bio||'',gm&&x.gmnotes?'\n[GM 메모]\n'+x.gmnotes:''].join('').trim();
+    if(att){const a=(x.attrs||[]).filter(r=>!/^repeating_/.test(r[0])).slice(0,40).map(r=>r[0]+' '+r[1]+(r[2]!==''&&r[2]!==undefined?'/'+r[2]:''));
+      if(a.length)body+=(body?'\n\n':'')+'[능력치] '+a.join(', ')}
+    const src=[x.avatar,x.token].find(u=>/^https?:/.test(u||'')),W=src?260:340;
+    if(src)put('c:'+x.name,{t:'img',w:W,h:Math.max(260,Math.min(620,160+H(body,W)-72+90)),title:x.name,body,src,c:'#fffdf6',who:cid?[cid]:[],pins:[],_g:'c'});
+    else put('c:'+x.name,{t:'memo',kind:'NPC',st:0,w:W,h:H(body,W),title:x.name,body,c:kcol('NPC'),who:cid?[cid]:[],_g:'c'});
+  });
+  // 새 항목을 아래쪽에 격자로 배치하고 틀로 묶어요
+  const bb=bounds(B.boxes.filter(b=>b.t!=='frame'))||{x:0,y:0,w:0,h:0};let oy=B.boxes.length?bb.y+bb.h+120:0;
+  [['h','핸드아웃','#9b8452',4],['c','캐릭터','#2a6fb0',4]].forEach(([g,name,col,cols])=>{
+    const L=fresh.filter(b=>b._g===g);if(!L.length)return;const G=20,Wm=Math.max(...L.map(b=>b.w)),ys=Array(cols).fill(oy+76);
+    L.forEach(b=>{let k=0;ys.forEach((y,j)=>{if(y<ys[k])k=j});b.x=20+k*(Wm+G);b.y=ys[k];ys[k]+=b.h+G;delete b._g;if(b.kind===undefined)delete b.kind;B.boxes.push(b)});
+    const hh=Math.max(...ys)-oy;B.boxes.unshift({id:uid(),t:'frame',x:0,y:oy,w:cols*(Wm+G)+G,h:hh+4,title:name+' · 롤20 '+new Date().toISOString().slice(0,10),body:'',c:col,fs:24,z:0});oy+=hh+90;
+  });
+  dlgClose();drawTabs();render();fitAll();save();
+  toast('롤20에서 '+add+'개 추가, '+upd+'개 갱신했어요');
+}
 /* ---------- 고른 박스 내보내기 (저널 가져오기용) ---------- */
 function exportSel(){
   const bs=[...sel].map(bx).filter(Boolean).filter(b=>b.t!=='frame');if(!bs.length)return toast('내보낼 박스를 먼저 골라 주세요. 여러 개는 Shift를 누르고 눌러요');
