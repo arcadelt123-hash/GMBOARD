@@ -92,6 +92,12 @@ button,select,input,textarea{font:inherit;color:inherit}
 .bx.t-img .hd{background:transparent;padding:4px 2px}
 .bx.t-img .hd input{text-align:center;font-weight:600}
 .bx.t-img .rs{right:2px;bottom:2px}
+.bx.t-img.card{padding:8px 6px 6px;border-radius:12px;border:1.5px dashed #b9a67a;background:var(--c,#fffdf6);box-shadow:0 2px 6px #0003}
+.bx.t-img.card.pc{border:1.5px solid #b8893a;background:#efe0b8}
+.bx.t-img.card .im img{border-radius:10px;background:#eadfc3}
+.bx.t-img.card .hd{padding:4px 0 0}
+.bx.t-img.card .hd textarea{width:100%;box-sizing:border-box;border:0;background:transparent;text-align:center;font-weight:700;font-size:.82rem;line-height:1.2;font-family:inherit;color:inherit;resize:none;overflow:hidden;height:2.6em;padding:0;outline:none}
+.bx.t-img.card .who{display:none}
 #world.lod .bx .who{display:none}
 #dlg{position:fixed;inset:0;background:#0006;z-index:90;display:none;align-items:center;justify-content:center;-webkit-user-select:text;user-select:text}
 #dlg.show{display:flex}
@@ -352,6 +358,7 @@ function boxEl(b){
   const d=document.createElement('div');d.dataset.id=b.id;
   d.className='bx t-'+b.t+(b.fold?' fold1':'')+(b.bd?' hasbd':'');
   d.style.cssText=`left:${b.x}px;top:${b.y}px;width:${b.w}px;height:${b.h}px;--c:${b.c};--fs:${b.fs||15}px;${b.bd?`--bds:${b.bd.s||'solid'};--bdc:${b.bd.c||'#c9b98f'};--bdw:${b.bd.w==null?2:b.bd.w}px;--bdr:${b.bd.r==null?12:b.bd.r}px;`:''}z-index:${b.t==='frame'?0:(b.z||1)}`;
+  if(b.t==='img'&&b.card){d.className+=' card'+(b.r20&&b.r20.pc?' pc':'');d.innerHTML=`<div class="im"><img src="${esc(b.src)}" alt="" draggable="false"></div><div class="hd"><textarea data-a="title" rows="2" placeholder="이름">${esc(b.title)}</textarea></div><div class="rs" data-a="rs"></div>`;return d}
   if(b.t==='img'){d.innerHTML=`<div class="im"><img src="${esc(b.src)}" alt="" draggable="false"></div><div class="hd"><input data-a="title" value="${esc(b.title)}" placeholder="설명"></div>${whoHtml(b)}<div class="rs" data-a="rs"></div>`;return d}
   if(b.t==='map'){const n=(b.pins||[]).length;d.innerHTML=`<div class="im"><div class="mi" style="position:relative"><img src="${esc(b.src)}" alt="" draggable="false">${(b.pins||[]).map((p,i)=>`<i class="pin" style="left:${p.x*100}%;top:${p.y*100}%;--pc:${esc(p.c||'#c0392b')}"></i>`).join('')}</div></div><div class="hd"><input data-a="title" value="${esc(b.title)}" placeholder="지도 이름"><button class="mapbtn" data-a="open">핀 ${n}</button></div>${whoHtml(b)}<div class="rs" data-a="rs"></div>`;return d}
   let h='<div class="hd">';
@@ -833,6 +840,7 @@ function r20Open(){
    +'<div style="margin-top:6px"><div style="font-weight:700">캐릭터 카드 테두리</div><div class="row"><select id="r20bs"><option value="">기본</option><option value="solid" selected>실선</option><option value="dashed">점선</option><option value="double">이중선</option><option value="ridge">입체선</option><option value="none">없음</option></select><input type="color" id="r20bc" value="#9b8452" title="색"><span style="font-size:12px;color:#7a6a48">두께</span><input type="range" id="r20bw" min="0" max="14" value="4" style="width:90px"></div></div>'
    +'<div class="row"><button onclick="dlgClose()">닫기</button><span style="flex:1"></span><button onclick="r20Run()">보드에 가져오기</button></div>');
 }
+const R20_DEF='data:image/svg+xml;utf8,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120"><rect width="120" height="120" fill="#d9cfb4"/><circle cx="60" cy="46" r="22" fill="#8f836a"/><path d="M16 120c4-32 24-46 44-46s40 14 44 46z" fill="#8f836a"/></svg>');
 function r20Add(txt){const os=r20Objs(txt);os.forEach(o=>{(o.handouts||[]).forEach(x=>__r20.hs.push(x));(o.characters||[]).forEach(x=>__r20.cs.push(x))});return os.length}
 function r20Scan(){
   const t=document.getElementById('r20t').value;__r20.hs=[];__r20.cs=[];const n=r20Add(t)+(__r20.files||[]).reduce((a,f)=>a+r20Add(f),0);
@@ -859,13 +867,12 @@ function r20Run(){
     let body=[x.bio||'',gm&&x.gmnotes?'\n[GM 메모]\n'+x.gmnotes:''].join('').trim();
     if(att){const a=(x.attrs||[]).filter(r=>!/^repeating_/.test(r[0])).slice(0,40).map(r=>r[0]+' '+r[1]+(r[2]!==''&&r[2]!==undefined?'/'+r[2]:''));
       if(a.length)body+=(body?'\n\n':'')+'[능력치] '+a.join(', ')}
-    const src=[x.avatar,x.token].find(u=>/^https?:/.test(u||'')),W=src?210:340,bd=bds?{s:bds,c:bdc,w:bdw,r:12}:null,r20={gm:x.gmnotes||'',attrs:x.attrs||[],abils:x.abilities||[],pc:pc};
-    if(src)put('c:'+x.name,{t:'img',w:W,h:Math.max(300,Math.min(620,230+H(body,W)-72)),title:x.name,body,src,c:'#fffdf6',who:cid?[cid]:[],pins:[],_g:'c',bd,r20});
-    else put('c:'+x.name,{t:'memo',kind:'NPC',st:0,w:W,h:H(body,W),title:x.name,body,c:kcol('NPC'),who:cid?[cid]:[],_g:'c',bd,r20});
+    const src0=[x.avatar,x.token].find(u=>/^https?:/.test(u||'')),src=src0||R20_DEF,W=128,bd=bds?{s:bds,c:bdc,w:bdw,r:12}:null,r20={gm:x.gmnotes||'',attrs:x.attrs||[],abils:x.abilities||[],pc:pc};
+    put('c:'+x.name,{t:'img',card:1,w:W,h:176,title:x.name,body,src,c:'#fffdf6',who:cid?[cid]:[],pins:[],_g:'c',bd,r20});
   });
   // 새 항목을 아래쪽에 격자로 배치하고 틀로 묶어요
   const bb=bounds(B.boxes.filter(b=>b.t!=='frame'))||{x:0,y:0,w:0,h:0};let oy=B.boxes.length?bb.y+bb.h+120:0;
-  [['h','핸드아웃','#9b8452',4],['c','캐릭터','#2a6fb0',4]].forEach(([g,name,col,cols])=>{
+  [['h','핸드아웃','#9b8452',4],['c','캐릭터','#2a6fb0',8]].forEach(([g,name,col,cols])=>{
     const L=fresh.filter(b=>b._g===g);if(!L.length)return;const G=20,Wm=Math.max(...L.map(b=>b.w)),ys=Array(cols).fill(oy+76);
     L.forEach(b=>{let k=0;ys.forEach((y,j)=>{if(y<ys[k])k=j});b.x=20+k*(Wm+G);b.y=ys[k];ys[k]+=b.h+G;delete b._g;if(b.kind===undefined)delete b.kind;B.boxes.push(b)});
     const hh=Math.max(...ys)-oy;B.boxes.unshift({id:uid(),t:'frame',x:0,y:oy,w:cols*(Wm+G)+G,h:hh+4,title:name+' · 롤20 '+new Date().toISOString().slice(0,10),body:'',c:col,fs:24,z:0});oy+=hh+90;
