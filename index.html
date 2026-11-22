@@ -808,11 +808,46 @@ $('dbody').addEventListener('click',e=>{const sp=e.target.closest('.dm');if(!sp)
 
 /* ---------- 어드벤처 저널에서 가져오기 ---------- */
 let JR=null;
-function jrOpen(){$('impjr').click()}
+function jrOpen(){
+  let urls=[];try{urls=JSON.parse(localStorage.getItem('gmj_urls')||'[]')}catch(e){}
+  dlgOpen('<h3>어드벤처 저널에서 가져오기</h3><div style="font-size:12px;color:#7a6a48;margin-bottom:6px">저널 사이트의 서버 주소(Apps Script …/exec)와 그 사이트 비밀번호를 넣으면 백업 파일 없이 바로 가져와요. 비밀번호는 저장하지 않고, 이 기기용 로그인 표만 저장해요.</div>'
+   +'<input type="text" id="jr_url" list="jr_urls" placeholder="저널 서버 주소 https://script.google.com/macros/s/…/exec" value="'+esc(urls[0]||'')+'" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:6px 8px;margin:4px 0"><datalist id="jr_urls">'+urls.map(u=>`<option value="${esc(u)}">`).join('')+'</datalist>'
+   +'<input type="text" id="jr_pw" placeholder="저널 비밀번호 (이미 로그인한 기기면 비워도 돼요)" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:6px 8px;margin:4px 0" autocomplete="off">'
+   +'<div class="row"><button class="ok" onclick="jrFetch()">사이트에서 바로 가져오기</button></div><div class="row"><button onclick="dlgClose();$(\'impjr\').click()">백업 파일(JSON)로 가져오기</button><span style="flex:1"></span><button onclick="dlgClose()">취소</button></div><div id="jr_msg" style="font-size:12px;color:#c0392b;min-height:16px"></div>');
+}
+async function jrGet(url,tk,q){const r=await fetch(url+(url.includes('?')?'&':'?')+'action='+q+(tk?'&tk='+encodeURIComponent(tk):''),{redirect:'follow'});return JSON.parse(await r.text())}
+async function jrFetch(){
+  const url=$('jr_url').value.trim(),pw=$('jr_pw').value,msg=t=>{const m=$('jr_msg');if(m)m.textContent=t};
+  if(!/^https:\/\/script\.google\.com\//.test(url))return msg('저널 서버 주소(https://script.google.com/…/exec)를 넣어 주세요');
+  msg('불러오는 중…');
+  try{
+    const tkKey='gmj_tk:'+url;let tk=localStorage.getItem(tkKey)||'',d=await jrGet(url,tk,'load');
+    if(d&&(d.status==='AUTH'||d.status==='BAD'||(!d.quests&&d.status))){
+      if(!pw)return msg('로그인이 필요해요. 비밀번호를 넣어 주세요');
+      const r=await fetch(url,{method:'POST',redirect:'follow',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({__auth:'login',pw,name:'GM 보드'})}),j=JSON.parse(await r.text());
+      if(j.status==='BAD')return msg('비밀번호가 달라요'+(j.left!=null?' (남은 시도 '+j.left+'번)':''));
+      if(!(j.status==='OK'&&j.tk))return msg('로그인하지 못했어요: '+(j.message||j.status||'알 수 없음'));
+      tk=j.tk;localStorage.setItem(tkKey,tk);d=await jrGet(url,tk,'load');
+    }
+    if(!d||!d.quests)return msg('저널 데이터를 받지 못했어요. 주소를 확인해 주세요');
+    let m=null;try{m=await jrGet(url,tk,'loadMap')}catch(e){}
+    const bt=d.boardTex||{};
+    JR={quests:d.quests,globalNpcs:d.globalNpcs||[],
+      pcs:(bt.pcs||[]).map(p=>({id:p.id,name:p.name||'',off:!!p.off,st:p.st||''})),
+      map:m&&m.maps?{maps:m.maps||[],pins:(m.pins||[]).map(p=>({id:p.id,mapId:p.mapId,x:p.x,y:p.y,title:p.title||'',category:p.category||'',desc:p.desc||'',sessions:p.sessions||[],quests:p.quests||[]})),categories:m.categories||[]}:null,
+      items:((bt.store||{}).items||[]).map(i=>({id:i.id,label:i.label||'',detail:i.detail||'',img:i.img||'',pc:i.pc||'',cat:i.cat||'',qid:i.qid||''})),
+      clueBoard:bt.clueBoard?{lanes:(bt.clueBoard.lanes||[]).map(l=>({id:l.id,label:l.label||'',session:l.session})),cards:(bt.clueBoard.cards||[]).map(k=>({id:k.id,text:k.text||'',done:!!k.done,lid:k.lid||'',qids:k.qids||[]}))}:null};
+    let urls=[];try{urls=JSON.parse(localStorage.getItem('gmj_urls')||'[]')}catch(e){}urls=[url].concat(urls.filter(u=>u!==url)).slice(0,5);localStorage.setItem('gmj_urls',JSON.stringify(urls));
+    jrChoose();
+  }catch(e){msg('연결하지 못했어요 ('+(e.message||e)+')')}
+}
 $('impjr').onchange=async e=>{
   const f=e.target.files[0];e.target.value='';if(!f)return;
   try{JR=JSON.parse(await f.text())}catch(err){return toast('저널 백업(JSON) 파일이 아니에요')}
   if(!JR||(!JR.quests&&!JR.pcs&&!JR.globalNpcs&&!JR.map))return toast('저널 백업(JSON) 파일이 아니에요');
+  jrChoose();
+};
+function jrChoose(){
   const q=(JR.quests||[]).length,pc=(JR.pcs||[]).length,np=(JR.globalNpcs||[]).length,mp=((JR.map||{}).maps||[]).length,pn=((JR.map||{}).pins||[]).length,it=(JR.items||[]).length,cl=(((JR.clueBoard||{}).cards)||[]).length;
   const row=(k,t,n,on)=>`<label class="row"><input type="checkbox" id="jr_${k}"${on&&n?' checked':''}${n?'':' disabled'}> ${t} <span style="color:#7a6a48">(${n})</span></label>`;
   dlgOpen('<h3>저널에서 가져오기 → '+esc(T.name)+'</h3>'+row('ch','인물 (PC · NPC 이름)',pc+np,1)+row('q','퀘스트 → 텍스트 박스',q,1)+row('m','지도 + 핀 (지도 '+mp+' · 핀 '+pn+')',mp,1)+row('i','아이템(창고) → 카드',it,1)+'<label class="row" style="margin-left:22px"><input type="checkbox" id="jr_img" checked> 아이템 사진도 카드로 붙이기 (사진 없는 아이템은 텍스트 메모)</label>'+row('c','단서 → 메모',cl,1)
