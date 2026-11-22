@@ -233,7 +233,7 @@ function adopt(d){ // 옛 형식(boards만 있는 것)도 팀 하나로 감싸�
   B=S.boards.find(b=>b.id===S.cur)||S.boards[0];S.cur=B.id;
 }
 function commit(){if(!T)return;T.boards=S.boards;T.cur=S.cur;T.docs=S.docs}
-function ser(){commit();return JSON.stringify({teams:S.teams,team:S.team,kinds:S.kinds})}
+function ser(){commit();return JSON.stringify({teams:S.teams,team:S.team,kinds:S.kinds,sites:S.sites||null})}
 function useTeam(id){
   commit();T=S.teams.find(t=>t.id===id);S.team=id;S.boards=T.boards;S.cur=T.cur;S.docs=T.docs;
   B=S.boards.find(b=>b.id===S.cur)||S.boards[0];S.cur=B.id;sel.clear();selLine=null;hist=[];fut=[];hits.clear();filter='';filterC='';$('flt').value='';
@@ -813,33 +813,65 @@ function jrOpen(){
   dlgOpen('<h3>어드벤처 저널에서 가져오기</h3><div style="font-size:12px;color:#7a6a48;margin-bottom:6px">저널 사이트의 서버 주소(Apps Script …/exec)와 그 사이트 비밀번호를 넣으면 백업 파일 없이 바로 가져와요. 비밀번호는 저장하지 않고, 이 기기용 로그인 표만 저장해요.</div>'
    +'<input type="text" id="jr_url" list="jr_urls" placeholder="저널 서버 주소 https://script.google.com/macros/s/…/exec" value="'+esc(urls[0]||'')+'" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:6px 8px;margin:4px 0"><datalist id="jr_urls">'+urls.map(u=>`<option value="${esc(u)}">`).join('')+'</datalist>'
    +'<input type="text" id="jr_pw" placeholder="저널 비밀번호 (이미 로그인한 기기면 비워도 돼요)" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:6px 8px;margin:4px 0" autocomplete="off">'
-   +'<div class="row"><button class="ok" onclick="jrFetch()">사이트에서 바로 가져오기</button></div><div class="row"><button onclick="dlgClose();$(\'impjr\').click()">백업 파일(JSON)로 가져오기</button><span style="flex:1"></span><button onclick="dlgClose()">취소</button></div><div id="jr_msg" style="font-size:12px;color:#c0392b;min-height:16px"></div>');
+   +'<div class="row"><button class="ok" onclick="jrFetch()">사이트에서 바로 가져오기</button></div><div class="row"><button onclick="jrMulti()">🗂 여러 사이트 한 번에 (팀별)</button>'+((S.sites&&S.sites.length)?'<button class="ok" onclick="jrMulti();msRun()">저장된 '+S.sites.length+'개 사이트 바로 가져오기</button>':'')+'</div><div class="row"><button onclick="dlgClose();$(\'impjr\').click()">백업 파일(JSON)로 가져오기</button><span style="flex:1"></span><button onclick="dlgClose()">취소</button></div><div id="jr_msg" style="font-size:12px;color:#c0392b;min-height:16px"></div>');
 }
 async function jrGet(url,tk,q){const r=await fetch(url+(url.includes('?')?'&':'?')+'action='+q+(tk?'&tk='+encodeURIComponent(tk):''),{redirect:'follow'});return JSON.parse(await r.text())}
+async function jrLoad(url,pw){
+  if(!/^https:\/\/script\.google\.com\//.test(url))throw new Error('저널 서버 주소(https://script.google.com/…/exec)를 넣어 주세요');
+  const tkKey='gmj_tk:'+url;let tk=localStorage.getItem(tkKey)||'',d=await jrGet(url,tk,'load');
+  if(d&&(d.status==='AUTH'||d.status==='BAD'||(!d.quests&&d.status))){
+    if(!pw)throw new Error('로그인이 필요해요. 비밀번호를 넣어 주세요');
+    const r=await fetch(url,{method:'POST',redirect:'follow',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({__auth:'login',pw,name:'GM 보드'})}),j=JSON.parse(await r.text());
+    if(j.status==='BAD')throw new Error('비밀번호가 달라요'+(j.left!=null?' (남은 시도 '+j.left+'번)':''));
+    if(!(j.status==='OK'&&j.tk))throw new Error('로그인하지 못했어요: '+(j.message||j.status||'알 수 없음'));
+    tk=j.tk;localStorage.setItem(tkKey,tk);d=await jrGet(url,tk,'load');
+  }
+  if(!d||!d.quests)throw new Error('저널 데이터를 받지 못했어요. 주소를 확인해 주세요');
+  let m=null;try{m=await jrGet(url,tk,'loadMap')}catch(e){}
+  const bt=d.boardTex||{};
+  return{quests:d.quests,globalNpcs:d.globalNpcs||[],
+    pcs:(bt.pcs||[]).map(p=>({id:p.id,name:p.name||'',off:!!p.off,st:p.st||''})),
+    map:m&&m.maps?{maps:m.maps||[],pins:(m.pins||[]).map(p=>({id:p.id,mapId:p.mapId,x:p.x,y:p.y,title:p.title||'',category:p.category||'',desc:p.desc||'',sessions:p.sessions||[],quests:p.quests||[]})),categories:m.categories||[]}:null,
+    items:((bt.store||{}).items||[]).map(i=>({id:i.id,label:i.label||'',detail:i.detail||'',img:i.img||'',pc:i.pc||'',cat:i.cat||'',qid:i.qid||''})),
+    clueBoard:bt.clueBoard?{lanes:(bt.clueBoard.lanes||[]).map(l=>({id:l.id,label:l.label||'',session:l.session})),cards:(bt.clueBoard.cards||[]).map(k=>({id:k.id,text:k.text||'',done:!!k.done,lid:k.lid||'',qids:k.qids||[]}))}:null};
+}
+function jrRemember(url){let urls=[];try{urls=JSON.parse(localStorage.getItem('gmj_urls')||'[]')}catch(e){}urls=[url].concat(urls.filter(u=>u!==url)).slice(0,5);localStorage.setItem('gmj_urls',JSON.stringify(urls))}
 async function jrFetch(){
   const url=$('jr_url').value.trim(),pw=$('jr_pw').value,msg=t=>{const m=$('jr_msg');if(m)m.textContent=t};
-  if(!/^https:\/\/script\.google\.com\//.test(url))return msg('저널 서버 주소(https://script.google.com/…/exec)를 넣어 주세요');
   msg('불러오는 중…');
-  try{
-    const tkKey='gmj_tk:'+url;let tk=localStorage.getItem(tkKey)||'',d=await jrGet(url,tk,'load');
-    if(d&&(d.status==='AUTH'||d.status==='BAD'||(!d.quests&&d.status))){
-      if(!pw)return msg('로그인이 필요해요. 비밀번호를 넣어 주세요');
-      const r=await fetch(url,{method:'POST',redirect:'follow',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({__auth:'login',pw,name:'GM 보드'})}),j=JSON.parse(await r.text());
-      if(j.status==='BAD')return msg('비밀번호가 달라요'+(j.left!=null?' (남은 시도 '+j.left+'번)':''));
-      if(!(j.status==='OK'&&j.tk))return msg('로그인하지 못했어요: '+(j.message||j.status||'알 수 없음'));
-      tk=j.tk;localStorage.setItem(tkKey,tk);d=await jrGet(url,tk,'load');
-    }
-    if(!d||!d.quests)return msg('저널 데이터를 받지 못했어요. 주소를 확인해 주세요');
-    let m=null;try{m=await jrGet(url,tk,'loadMap')}catch(e){}
-    const bt=d.boardTex||{};
-    JR={quests:d.quests,globalNpcs:d.globalNpcs||[],
-      pcs:(bt.pcs||[]).map(p=>({id:p.id,name:p.name||'',off:!!p.off,st:p.st||''})),
-      map:m&&m.maps?{maps:m.maps||[],pins:(m.pins||[]).map(p=>({id:p.id,mapId:p.mapId,x:p.x,y:p.y,title:p.title||'',category:p.category||'',desc:p.desc||'',sessions:p.sessions||[],quests:p.quests||[]})),categories:m.categories||[]}:null,
-      items:((bt.store||{}).items||[]).map(i=>({id:i.id,label:i.label||'',detail:i.detail||'',img:i.img||'',pc:i.pc||'',cat:i.cat||'',qid:i.qid||''})),
-      clueBoard:bt.clueBoard?{lanes:(bt.clueBoard.lanes||[]).map(l=>({id:l.id,label:l.label||'',session:l.session})),cards:(bt.clueBoard.cards||[]).map(k=>({id:k.id,text:k.text||'',done:!!k.done,lid:k.lid||'',qids:k.qids||[]}))}:null};
-    let urls=[];try{urls=JSON.parse(localStorage.getItem('gmj_urls')||'[]')}catch(e){}urls=[url].concat(urls.filter(u=>u!==url)).slice(0,5);localStorage.setItem('gmj_urls',JSON.stringify(urls));
-    jrChoose();
-  }catch(e){msg('연결하지 못했어요 ('+(e.message||e)+')')}
+  try{JR=await jrLoad(url,pw);jrRemember(url);jrChoose()}catch(e){msg(e.message||String(e))}
+}
+function jrMulti(){
+  let L=(S.sites&&S.sites.length)?S.sites.map(s=>({n:s.n,u:s.u})):[];if(!L.length){try{L=JSON.parse(localStorage.getItem('gmj_sites')||'[]')}catch(e){}}
+  if(!L.length)L=[{n:'',u:''},{n:'',u:''},{n:'',u:''}];
+  L.forEach(s=>{try{s.p=localStorage.getItem('gmj_pw:'+s.u)||''}catch(e){}});
+  window.__ms=L;
+  const row=(k,t,on)=>`<label style="margin-right:10px;white-space:nowrap"><input type="checkbox" id="ms_${k}"${on?' checked':''}> ${t}</label>`;
+  dlgOpen('<h3>저널 여러 사이트 한 번에 가져오기</h3><div style="font-size:12px;color:#7a6a48;margin-bottom:6px">사이트마다 「팀 이름 · 서버 주소 · 비밀번호」를 넣어요. 같은 이름의 팀이 있으면 그 팀에, 없으면 새 팀을 만들어 「저널 가져옴」 보드를 넣어요. 팀 이름과 주소만 저장하고 비밀번호는 저장하지 않아요(한 번 로그인한 사이트는 비워도 돼요).</div><div id="msl"></div><div class="row"><button onclick="msAdd()">＋ 사이트 추가</button></div><div style="margin:6px 0;line-height:2">'
+   +row('ch','인물',1)+row('q','퀘스트',1)+row('m','지도·핀',1)+row('i','아이템',1)+row('c','단서',1)+row('img','아이템 사진',1)+row('skip','비활성·죽은 인물/완료 퀘스트 빼기',1)+row('pw','비밀번호도 이 기기에 저장',L.some(s=>s.p))+'</div><div class="row"><button class="ok" onclick="msRun()">한 번에 가져오기</button><span style="flex:1"></span><button onclick="dlgClose()">닫기</button></div><div id="msm" style="font-size:12px;min-height:16px;white-space:pre-wrap"></div>');
+  msDraw();
+}
+function msDraw(){$('msl').innerHTML=__ms.map((s,i)=>`<div class="row" style="flex-wrap:wrap"><input type="text" placeholder="팀 이름" value="${esc(s.n)}" oninput="__ms[${i}].n=this.value" style="flex:0 0 110px" list="ms_teams"><input type="text" placeholder="서버 주소 …/exec" value="${esc(s.u)}" oninput="__ms[${i}].u=this.value" style="flex:1 1 170px"><input type="text" placeholder="비밀번호" value="${esc(s.p||'')}" oninput="__ms[${i}].p=this.value" style="flex:0 0 100px" autocomplete="off"><button onclick="__ms.splice(${i},1);msDraw()">✕</button></div>`).join('')+'<datalist id="ms_teams">'+S.teams.map(t=>`<option value="${esc(t.name)}">`).join('')+'</datalist>'}
+function msAdd(){__ms.push({n:'',u:''});msDraw()}
+async function msRun(){
+  const sites=__ms.filter(s=>(s.u||'').trim()),msg=t=>$('msm').textContent=t;
+  if(!sites.length)return msg('사이트 주소를 하나 이상 넣어 주세요');
+  if(sites.some(s=>!(s.n||'').trim()))return msg('각 사이트의 팀 이름을 넣어 주세요');
+  S.sites=sites.map(s=>({n:s.n.trim(),u:s.u.trim()}));localStorage.setItem('gmj_sites',JSON.stringify(S.sites));save();
+  sites.forEach(s=>{try{if($('ms_pw').checked&&s.p)localStorage.setItem('gmj_pw:'+s.u.trim(),s.p);else if(!$('ms_pw').checked)localStorage.removeItem('gmj_pw:'+s.u.trim())}catch(e){}});
+  const g=k=>$('ms_'+k).checked,opts={on:{ch:g('ch'),q:g('q'),m:g('m'),i:g('i'),c:g('c')},skip:g('skip'),withDone:false,img:g('img')};
+  let log='',ok=0,first=null;
+  for(const s of sites){
+    msg(log+'… '+s.n+' 가져오는 중');
+    try{
+      const d=await jrLoad(s.u.trim(),s.p||'');jrRemember(s.u.trim());
+      let t=S.teams.find(x=>x.name===s.n.trim());if(!t){t=newTeam(s.n.trim());S.teams.push(t)}
+      commit();useTeam(t.id);
+      await jrImport(d,opts);
+      if(!first)first=t.id;ok++;log+='✓ '+s.n+' — '+B.boxes.length+'개\n';
+    }catch(e){log+='✗ '+s.n+' — '+(e.message||e)+'\n'}
+  }
+  msg(log);if(first){useTeam(first);toast(ok+'개 사이트를 팀별로 가져왔어요')}
 }
 $('impjr').onchange=async e=>{
   const f=e.target.files[0];e.target.value='';if(!f)return;
@@ -855,10 +887,15 @@ function jrChoose(){
    +'<div style="font-size:12px;color:#7a6a48;margin:4px 0">새 보드 「저널 가져옴」이 만들어지고 그 안에 틀로 나뉘어 들어가요. 핀은 해당 퀘스트 박스와 이어져요.</div><div class="row"><span style="flex:1"></span><button onclick="dlgClose()">취소</button><button class="ok" onclick="jrRun()">가져오기</button></div>');
 }
 function imgSize(url){return new Promise(res=>{const im=new Image();im.onload=()=>res(im.naturalWidth/im.naturalHeight);im.onerror=()=>res(1.5);im.src=url;setTimeout(()=>res(1.5),4000)})}
-async function jrRun(){
-  const imgOn=$("jr_img")&&$("jr_img").checked;const on=k=>$('jr_'+k)&&$('jr_'+k).checked,skip=$('jr_skip').checked,withDone=$('jr_done').checked,d=JR;dlgClose();toast('가져오는 중…');
-  commit();snap&&0;
-  const nb=newBoard('저널 가져옴');S.boards.push(nb);const prev=B;B=nb;S.cur=nb.id;
+function jrRun(){
+  const g=k=>$('jr_'+k)&&$('jr_'+k).checked;dlgClose();toast('가져오는 중…');
+  jrImport(JR,{on:{ch:g('ch'),q:g('q'),m:g('m'),i:g('i'),c:g('c')},skip:g('skip'),withDone:g('done'),img:g('img')});
+}
+async function jrImport(d,opts){
+  const on=k=>opts.on[k],skip=opts.skip,withDone=opts.withDone;
+  commit();
+  const nb=newBoard('저널 가져옴');
+  S.boards.push(nb);B=nb;S.cur=nb.id;
   const idByName={};CH().forEach(c=>idByName[c.name]=c.id);
   const addCh=(nm,col)=>{nm=String(nm||'').trim();if(!nm||idByName[nm])return;const c={id:uid(),name:nm,c:col};T.chars=T.chars||[];T.chars.push(c);idByName[nm]=c.id};
   if(on('ch')){(d.pcs||[]).forEach(p=>{if(skip&&(p.off||p.st==='dead'||p.st==='out'))return;addCh(p.name,'#f4b8b8')});(d.globalNpcs||[]).forEach(p=>{if(skip&&(p.st==='dead'||p.st==='out'||p.st==='missing'))return;addCh(p.name,'#a8d8ea')})}
@@ -889,7 +926,7 @@ async function jrRun(){
   if(on('i')){
     const its=d.items||[],cols=6,W=230,G=20,ys=Array(cols).fill(76);
     its.forEach(it=>{let k=0;ys.forEach((y,j)=>{if(y<ys[k])k=j});
-      const has=!!it.img&&$('jr_img')&&$('jr_img').checked,h=has?250:150,who=it.pc&&idByName[it.pc]?[idByName[it.pc]]:[];
+      const has=!!it.img&&opts.img,h=has?250:150,who=it.pc&&idByName[it.pc]?[idByName[it.pc]]:[];
       const b=has?{id:uid(),t:'img',x:20+k*(W+G),y:oy+ys[k],w:W,h,title:it.label||'',body:it.detail||'',src:it.img,c:'#fffdf6',fs:15,z:z++,who,pins:[]}
         :{id:uid(),t:'memo',x:20+k*(W+G),y:oy+ys[k],w:W,h,title:it.label||'아이템',body:it.detail||'',c:kcol('아이템'),fs:15,kind:'아이템',st:0,z:z++,who};
       B.boxes.push(b);ys[k]+=h+G});
@@ -916,7 +953,7 @@ const DEFAULT_URL='';   // 배포한 Apps Script 웹앱 주소를 여기에 넣�
 let SY={url:'',key:'',rev:'',dirty:false,busy:false,off:false};
 try{SY.url=localStorage.getItem('gmb_url')||DEFAULT_URL;SY.key=localStorage.getItem('gmb_key')||'';SY.rev=localStorage.getItem('gmb_rev')||''}catch(e){SY.url=DEFAULT_URL}
 function syLabel(t,cls){const b=$('syncbtn');b.textContent=t;b.classList.toggle('on',cls==='ok')}
-function syPayload(){commit();return JSON.stringify({teams:S.teams.map(t=>({id:t.id,name:t.name,cur:t.cur,docs:t.docs,chars:t.chars,boards:t.boards.map(b=>({id:b.id,name:b.name,boxes:b.boxes,links:b.links}))})),team:S.team,kinds:S.kinds})}
+function syPayload(){commit();return JSON.stringify({teams:S.teams.map(t=>({id:t.id,name:t.name,cur:t.cur,docs:t.docs,chars:t.chars,boards:t.boards.map(b=>({id:b.id,name:b.name,boxes:b.boxes,links:b.links}))})),team:S.team,kinds:S.kinds,sites:S.sites||null})}
 function viewsGet(){try{return JSON.parse(localStorage.getItem('gmb_views')||'{}')}catch(e){return{}}}
 function viewsSave(){try{const v=viewsGet();S.teams.forEach(t=>(t===T?S.boards:t.boards).forEach(b=>v[b.id]=b.view));localStorage.setItem('gmb_views',JSON.stringify(v))}catch(e){}}
 function syApply(d){ // 서버 내용으로 바꾸기 (화면 위치·보고 있던 팀은 이 기기 것을 유지)
